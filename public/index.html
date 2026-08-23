@@ -49,4 +49,67 @@ let ps=state?.players||[];ps.forEach(p=>{ctx.fillStyle=p.slot===0?"#ef4444":"#3b
 ctx.fillStyle="#111c";ctx.fillRect(18,18,1064,70);ctx.fillStyle="#fff";ctx.font="bold 25px system-ui";ctx.fillText("❤️ "+(ps[0]?.stocks??3)+"   💯 "+(Math.floor(ps[0]?.damage||0))+"%",35,55);ctx.fillText("❤️ "+(ps[1]?.stocks??3)+"   💯 "+(Math.floor(ps[1]?.damage||0))+"%",720,55);
 if(state?.phase==="result"){ctx.fillStyle="#000b";ctx.fillRect(0,0,1100,650);ctx.textAlign="center";ctx.font="bold 60px system-ui";ctx.fillText("🏆 P"+(state.winner+1)+" WIN!",550,320);ctx.textAlign="left"}requestAnimationFrame(draw)}
 draw();
-</script></body></html>
+</script>
+<div id="touchControls" aria-label="タブレット操作">
+  <button class="touchBtn move" data-action="left">◀</button>
+  <button class="touchBtn jump" data-action="jump">▲</button>
+  <button class="touchBtn move" data-action="right">▶</button>
+  <button class="touchBtn attack" data-action="attack">👊</button>
+  <button class="touchBtn special" data-action="special1">①</button>
+  <button class="touchBtn special" data-action="special2">②</button>
+  <button class="touchBtn special" data-action="special3">③</button>
+</div>
+
+<style>
+#touchControls{
+  position:fixed;
+  left:50%;
+  bottom:12px;
+  transform:translateX(-50%);
+  z-index:9999;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  justify-content:center;
+  width:min(96vw,760px);
+  padding:8px;
+  box-sizing:border-box;
+  touch-action:none;
+}
+.touchBtn{
+  min-width:58px;
+  min-height:58px;
+  border:2px solid rgba(255,255,255,.75);
+  border-radius:16px;
+  background:rgba(20,20,30,.82);
+  color:#fff;
+  font-size:24px;
+  font-weight:800;
+  user-select:none;
+  -webkit-user-select:none;
+  -webkit-touch-callout:none;
+  touch-action:none;
+}
+.touchBtn:active{transform:scale(.92);background:rgba(80,80,110,.95)}
+@media (max-width:600px){
+  #touchControls{gap:5px;bottom:8px;padding:5px}
+  .touchBtn{min-width:45px;min-height:52px;font-size:20px;border-radius:13px}
+}
+</style>
+<script>
+(() => {
+  const buttons = document.querySelectorAll("#touchControls .touchBtn");
+  buttons.forEach(btn => {
+    const action = btn.dataset.action;
+    const send = e => {
+      e.preventDefault();
+      if (typeof socket !== "undefined" && socket && socket.connected) {
+        socket.emit("input", {action});
+      }
+    };
+    btn.addEventListener("pointerdown", send, {passive:false});
+    btn.addEventListener("touchstart", send, {passive:false});
+  });
+})();
+</script>
+</body></html>
