@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ARENA ONLINE</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#090b12;color:#fff;font-family:system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:14px}
+.panel{background:#171a24;border:1px solid #343949;border-radius:16px;padding:14px;margin-bottom:10px}
+select,input,button{font:inherit;padding:10px;margin:4px;border-radius:9px;border:1px solid #555;background:#222735;color:#fff}
+canvas{width:100%;border:3px solid #fff;border-radius:14px;display:block;touch-action:none}
+#touch{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:8px}.touch{padding:18px 5px;font-size:20px}
+.small{color:#aab2c5;font-size:13px}
+</style></head><body><main>
+<div class="panel"><h1>⚔️ ARENA ONLINE</h1>
+<select id="character"></select><select id="stage"><option>Sky Island</option><option>Battle Field</option><option>Small Arena</option></select>
+<input id="adminCode" placeholder="管理者コード（任意）" maxlength="4"><button id="unlock">管理者キャラ解放</button>
+<div><input id="roomId" placeholder="ルームID"><button id="create">🏠 ルーム作成</button><button id="join">🔗 参加</button><button id="restart">🔄 再戦</button></div>
+<div id="status">サーバー未接続</div><div class="small">通常キャラと管理者キャラは完全分離。管理者コードは3487。</div></div>
+<canvas id="game" width="1100" height="650"></canvas>
+<div id="touch"><button class="touch" data-a="left">◀</button><button class="touch" data-a="jump">▲</button><button class="touch" data-a="right">▶</button><button class="touch" data-a="attack">👊</button><button class="touch" data-a="special3">⭐</button></div>
+<div class="small">PC: A/D/W/F・1/2/3　｜　タブレット: 画面ボタン　｜　R: 再戦</div>
+</main>
+<script src="/socket.io/socket.io.js"></script><script>
+const socket=io(),c=document.querySelector("#game"),ctx=c.getContext("2d"),statusEl=document.querySelector("#status");
+const normal=[["🔥 ブレイズ","Blaze"],["⚡ ストーム","Storm"],["🪨 ロック","Rock"],["🌑 シャドウ","Shadow"],["🪽 ウィング","Wing"]];
+const admin=[["👑 ネオン","Neon"],["💀 デストロイヤー","Destroyer"],["🌌 ゼロ","Zero"],["☠️ グリッチ","Glitch"],["🐉 ドラゴン","Dragon"]];
+let unlocked=false,state=null,pressed={};
+function fillChars(){
+ character.innerHTML="";let a=document.createElement("optgroup");a.label="🎭 通常キャラ";
+ normal.forEach(v=>a.append(new Option(v[0],v[1])));character.append(a);
+ if(unlocked){let b=document.createElement("optgroup");b.label="👑 管理者キャラ";
+ admin.forEach(v=>b.append(new Option(v[0],v[1])));character.append(b)}
+}
+fillChars();
+unlock.onclick=()=>{if(adminCode.value==="3487"){unlocked=true;fillChars();statusEl.textContent="👑 管理者キャラを解放しました"}else statusEl.textContent="⚠️ コードが違います"};
+create.onclick=()=>socket.emit("createRoom",{character:character.value,stage:stage.value,adminCode:adminCode.value});
+join.onclick=()=>socket.emit("joinRoom",{id:roomId.value,character:character.value});
+restart.onclick=()=>socket.emit("restart");
+socket.on("connect",()=>statusEl.textContent="🌐 オンライン");
+socket.on("roomCreated",m=>{roomId.value=m.id;unlocked=m.adminUnlocked||unlocked;fillChars();statusEl.textContent="🏠 ルーム "+m.id+" を作成しました"});
+socket.on("errorMsg",m=>statusEl.textContent="⚠️ "+m);
+socket.on("state",s=>{state=s;if(s.adminUnlocked&&!unlocked){unlocked=true;fillChars()}});
+addEventListener("keydown",e=>{let k=e.key.toLowerCase();if(k==="r")socket.emit("restart");if(["a","d","w","f","1","2","3"].includes(k))pressed[k]=1});
+addEventListener("keyup",e=>pressed[e.key.toLowerCase()]=0);
+setInterval(()=>{if(pressed.a)socket.emit("input",{action:"left"});if(pressed.d)socket.emit("input",{action:"right"});if(pressed.w)socket.emit("input",{action:"jump"});if(pressed.f)socket.emit("input",{action:"attack"});if(pressed["1"])socket.emit("input",{action:"special1"});if(pressed["2"])socket.emit("input",{action:"special2"});if(pressed["3"])socket.emit("input",{action:"special3"})},45);
+document.querySelectorAll(".touch").forEach(b=>{b.onpointerdown=e=>{e.preventDefault();socket.emit("input",{action:b.dataset.a})}});
+function draw(){ctx.clearRect(0,0,1100,650);let g=ctx.createLinearGradient(0,0,0,650);g.addColorStop(0,"#55b9ef");g.addColorStop(1,"#d8f4ff");ctx.fillStyle=g;ctx.fillRect(0,0,1100,650);
+ctx.fillStyle="#6b4f35";ctx.fillRect(200,500,700,30);ctx.fillStyle="#54a83f";ctx.fillRect(200,493,700,9);ctx.fillStyle="#6b4f35";ctx.fillRect(380,390,340,22);
+let ps=state?.players||[];ps.forEach(p=>{ctx.fillStyle=p.slot===0?"#ef4444":"#3b82f6";ctx.fillRect(p.x,p.y,48,70);ctx.fillStyle="#ffd6b0";ctx.beginPath();ctx.arc(p.x+24,p.y+14,16,0,7);ctx.fill();if(p.invincible){ctx.strokeStyle="#fff";ctx.lineWidth=5;ctx.strokeRect(p.x-5,p.y-5,58,80)}});
+ctx.fillStyle="#111c";ctx.fillRect(18,18,1064,70);ctx.fillStyle="#fff";ctx.font="bold 25px system-ui";ctx.fillText("❤️ "+(ps[0]?.stocks??3)+"   💯 "+(Math.floor(ps[0]?.damage||0))+"%",35,55);ctx.fillText("❤️ "+(ps[1]?.stocks??3)+"   💯 "+(Math.floor(ps[1]?.damage||0))+"%",720,55);
+if(state?.phase==="result"){ctx.fillStyle="#000b";ctx.fillRect(0,0,1100,650);ctx.textAlign="center";ctx.font="bold 60px system-ui";ctx.fillText("🏆 P"+(state.winner+1)+" WIN!",550,320);ctx.textAlign="left"}requestAnimationFrame(draw)}
+draw();
+</script></body></html>
