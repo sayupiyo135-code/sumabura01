@@ -9,7 +9,10 @@ const io = new Server(server);
 app.use(express.static("public"));
 
 const PORT = process.env.PORT || 3000;
-const ADMIN_CODE = "3487";
+
+// 🔐 GitHubには秘密コードを書かない
+// RenderのEnvironment Variablesに ADMIN_CODE=3487 を設定する
+const ADMIN_CODE = process.env.ADMIN_CODE || "";
 
 const rooms = new Map();
 
@@ -32,11 +35,11 @@ function validCharacter(id, unlocked) {
   return c && (!c.admin || unlocked);
 }
 
-function createPlayer(socketId, slot, character) {
+function makePlayer(socketId, slot, char) {
   return {
     socketId,
     slot,
-    character,
+    char,
     x: slot === 0 ? 360 : 690,
     y: 250,
     vx: 0,
@@ -45,8 +48,29 @@ function createPlayer(socketId, slot, character) {
     stocks: 3,
     invincible: 90,
     attackCooldown: 0,
-    lastHitTime: 0,
+    lastHitAt: 0,
     connected: true
+  };
+}
+
+function publicState(room) {
+  return {
+    phase: room.phase,
+    stage: room.stage,
+    adminUnlocked: room.adminUnlocked,
+    roomId: room.id,
+    winner: room.winner,
+
+    players: room.players.map(p => ({
+      slot: p.slot,
+      char: p.char,
+      x: p.x,
+      y: p.y,
+      damage: Math.floor(p.damage),
+      stocks: p.stocks,
+      invincible: p.invincible > 0,
+      connected: p.connected
+    }))
   };
 }
 
@@ -58,105 +82,83 @@ function resetPlayer(p) {
   p.damage = 0;
   p.invincible = 90;
   p.attackCooldown = 0;
-  p.lastHitTime = 0;
+  p.lastHitAt = 0;
 }
 
-function publicState(room) {
-  return {
-    roomId: room.id,
-    phase: room.phase,
-    stage: room.stage,
-    adminUnlocked: room.adminUnlocked,
-    winner: room.winner,
-    players: room.players.map(p => ({
-      slot: p.slot,
-      character: p.character,
-      x: p.x,
-      y: p.y,
-      damage: Math.floor(p.damage),
-      stocks: p.stocks,
-      invincible: p.invincible > 0,
-      connected: p.connected
-    }))
-  };
-}
+function attack(room, p, type) {
+  if (room.phase !== "battle" || p.attackCooldown > 0) return;
 
-function attack(room, player, type) {
-  if (room.phase !== "battle") return;
-  if (player.attackCooldown > 0) return;
+  p.attackCooldown = type === "attack" ? 220 : 420;
 
   const target = room.players.find(
-    p => p !== player && p.connected
+    q => q !== p && q.connected
   );
 
   if (!target || target.invincible > 0) return;
 
-  let damage = 7;
-  let range = 72;
-  let knockback = 7;
+  const admin = CHARACTERS[p.char].admin;
 
-  if (type === "special1") {
-    damage = 10;
-    range = 105;
-    knockback = 8;
-  }
+  const baseDamage = {
+    attack: 7,
+    special1: 10,
+    special2: 12,
+    special3: 16
+  }[type] || 7;
 
-  if (type === "special2") {
-    damage = 12;
-    range = 90;
-    knockback = 9;
-  }
-
-  if (type === "special3") {
-    damage = 16;
-    range = 125;
-    knockback = 11;
-  }
-
-  if (CHARACTERS[player.character].admin) {
-    damage *= 1.12;
-  }
-
-  player.attackCooldown =
-    type === "attack" ? 220 : 420;
+  const range = {
+    attack: 72,
+    special1: 105,
+    special2: 90,
+    special3: 125
+  }[type] || 72;
 
   if (
-    Math.abs(target.x - player.x) <= range &&
-    Math.abs(target.y - player.y) <= 90 &&
-    Date.now() - target.lastHitTime > 180
+    Math.abs(target.x - p.x) <= range &&
+    Math.abs(target.y - p.y) <= 90 &&
+    Date.now() - target.lastHitAt > 180
   ) {
-    const direction =
-      target.x >= player.x ? 1 : -1;
+    const direction = target.x >= p.x ? 1 : -1;
 
-    target.damage += damage;
+    target.damage = Math.min(
+      999,
+      target.damage + baseDamage * (admin ? 1.12 : 1)
+    );
 
-    const kb =
-      knockback + target.damage * 0.055;
+    const knockback =
+      (type === "attack"
+        ? 7
+        : type === "special1"
+        ? 8
+        : type === "special2"
+        ? 9
+        : 11) +
+      target.damage * 0.055;
 
-    target.vx = direction * kb;
+    target.vx = direction * knockback;
     target.vy = -(6 + target.damage * 0.018);
-
-    target.lastHitTime = Date.now();
+    target.lastHitAt = Date.now();
   }
 }
 
-function updateRoom(room) {
+function tick(room) {
   if (room.phase !== "battle") return;
 
   for (const p of room.players) {
     if (!p.connected) continue;
 
-    p.attackCooldown =
-      Math.max(0, p.attackCooldown - 33);
+    p.attackCooldown = Math.max(
+      0,
+      p.attackCooldown - 33
+    );
 
-    p.invincible =
-      Math.max(0, p.invincible - 1);
+    p.invincible = Math.max(
+      0,
+      p.invincible - 1
+    );
 
     p.vy += 0.62;
-
     p.x += p.vx;
     p.y += p.vy;
-
     p.vx *= 0.88;
 
     if (
@@ -168,6 +170,7 @@ function updateRoom(room) {
       p.vy = 0;
     }
 
+    // 場外
     if (
       p.x < -120 ||
       p.x > 1120 ||
@@ -179,12 +182,11 @@ function updateRoom(room) {
         room.phase = "result";
 
         const winner =
-          room.players.find(
-            other => other !== p
-          );
+          room.players.find(q => q !== p);
 
-        room.winner =
-          winner ? winner.slot : 0;
+        room.winner = winner
+          ? winner.slot
+          : 0;
       } else {
         resetPlayer(p);
       }
@@ -198,13 +200,28 @@ function updateRoom(room) {
 }
 
 setInterval(() => {
-  for (const room of rooms.values()) {
-    updateRoom(room);
-  }
+  rooms.forEach(tick);
 }, 33);
 
 io.on("connection", socket => {
 
+  // 🔐 管理者コード確認
+  // 本当の3487はRenderの環境変数にだけ存在
+  socket.on("adminUnlock", data => {
+
+    const entered =
+      String(data?.code || "");
+
+    const success =
+      Boolean(ADMIN_CODE) &&
+      entered === ADMIN_CODE;
+
+    socket.emit("adminResult", {
+      ok: success
+    });
+  });
+
+  // ルーム作成
   socket.on("createRoom", data => {
 
     const id =
@@ -213,13 +230,13 @@ io.on("connection", socket => {
         .slice(2, 8)
         .toUpperCase();
 
-    const unlocked =
+    const adminUnlocked =
       data.adminCode === ADMIN_CODE;
 
-    const character =
+    const char =
       validCharacter(
         data.character,
-        unlocked
+        adminUnlocked
       )
         ? data.character
         : "Blaze";
@@ -227,17 +244,17 @@ io.on("connection", socket => {
     const room = {
       id,
       stage: data.stage || "Sky Island",
-      adminUnlocked: unlocked,
+      adminUnlocked,
       phase: "lobby",
       players: [],
       winner: null
     };
 
     room.players.push(
-      createPlayer(
+      makePlayer(
         socket.id,
         0,
-        character
+        char
       )
     );
 
@@ -245,13 +262,10 @@ io.on("connection", socket => {
 
     socket.join(id);
 
-    socket.emit(
-      "roomCreated",
-      {
-        id,
-        adminUnlocked: unlocked
-      }
-    );
+    socket.emit("roomCreated", {
+      id,
+      adminUnlocked
+    });
 
     io.to(id).emit(
       "state",
@@ -259,31 +273,30 @@ io.on("connection", socket => {
     );
   });
 
+  // ルーム参加
   socket.on("joinRoom", data => {
 
-    const id =
-      String(data.id || "")
-        .toUpperCase();
-
-    const room = rooms.get(id);
+    const room =
+      rooms.get(
+        String(data.id || "")
+          .toUpperCase()
+      );
 
     if (!room) {
-      socket.emit(
+      return socket.emit(
         "errorMsg",
         "そのルームはありません"
       );
-      return;
     }
 
     if (room.players.length >= 2) {
-      socket.emit(
+      return socket.emit(
         "errorMsg",
         "ルームは満員です"
       );
-      return;
     }
 
-    const character =
+    const char =
       validCharacter(
         data.character,
         room.adminUnlocked
@@ -292,56 +305,56 @@ io.on("connection", socket => {
         : "Blaze";
 
     room.players.push(
-      createPlayer(
+      makePlayer(
         socket.id,
         1,
-        character
+        char
       )
     );
 
-    socket.join(id);
+    socket.join(room.id);
 
     room.phase = "battle";
 
-    io.to(id).emit(
+    io.to(room.id).emit(
       "state",
       publicState(room)
     );
   });
 
+  // 操作
   socket.on("input", data => {
 
     for (const room of rooms.values()) {
 
-      const player =
+      const p =
         room.players.find(
-          p => p.socketId === socket.id
+          q => q.socketId === socket.id
         );
 
-      if (!player) continue;
-      if (room.phase !== "battle") continue;
+      if (!p || room.phase !== "battle") {
+        continue;
+      }
 
       if (data.action === "left") {
-        player.vx =
-          Math.max(
-            -7,
-            player.vx - 0.9
-          );
+        p.vx = Math.max(
+          -7,
+          p.vx - 0.9
+        );
       }
 
       if (data.action === "right") {
-        player.vx =
-          Math.min(
-            7,
-            player.vx + 0.9
-          );
+        p.vx = Math.min(
+          7,
+          p.vx + 0.9
+        );
       }
 
       if (
         data.action === "jump" &&
-        player.y >= 390
+        p.y >= 390
       ) {
-        player.vy = -13;
+        p.vy = -13;
       }
 
       if (
@@ -354,7 +367,7 @@ io.on("connection", socket => {
       ) {
         attack(
           room,
-          player,
+          p,
           data.action
         );
       }
@@ -363,16 +376,18 @@ io.on("connection", socket => {
     }
   });
 
+  // 再戦
   socket.on("restart", () => {
 
     for (const room of rooms.values()) {
 
-      const found =
-        room.players.some(
+      if (
+        !room.players.some(
           p => p.socketId === socket.id
-        );
-
-      if (!found) continue;
+        )
+      ) {
+        continue;
+      }
 
       room.phase =
         room.players.length === 2
@@ -395,31 +410,35 @@ io.on("connection", socket => {
     }
   });
 
+  // 切断
   socket.on("disconnect", () => {
 
-    for (const room of rooms.values()) {
+    for (const [id, room] of rooms) {
 
-      const player =
+      const p =
         room.players.find(
-          p => p.socketId === socket.id
+          q => q.socketId === socket.id
         );
 
-      if (!player) continue;
+      if (p) {
+        p.connected = false;
 
-      player.connected = false;
+        io.to(id).emit(
+          "state",
+          publicState(room)
+        );
 
-      io.to(room.id).emit(
-        "state",
-        publicState(room)
-      );
-
-      break;
+        break;
+      }
     }
   });
 });
 
-server.listen(PORT, () => {
-  console.log(
-    `Arena server running on port ${PORT}`
-  );
-});
+server.listen(
+  PORT,
+  () => {
+    console.log(
+      `Arena server listening on ${PORT}`
+    );
+  }
+);
