@@ -30,12 +30,13 @@ function fillChars(){
  admin.forEach(v=>b.append(new Option(v[0],v[1])));character.append(b)}
 }
 fillChars();
-unlock.onclick=()=>{if(adminCode.value==="3487"){unlocked=true;fillChars();statusEl.textContent="👑 管理者キャラを解放しました"}else statusEl.textContent="⚠️ コードが違います"};
+unlock.onclick=()=>socket.emit("adminUnlock",{code:adminCode.value});
 create.onclick=()=>socket.emit("createRoom",{character:character.value,stage:stage.value,adminCode:adminCode.value});
 join.onclick=()=>socket.emit("joinRoom",{id:roomId.value,character:character.value});
 restart.onclick=()=>socket.emit("restart");
 socket.on("connect",()=>statusEl.textContent="🌐 オンライン");
 socket.on("roomCreated",m=>{roomId.value=m.id;unlocked=m.adminUnlocked||unlocked;fillChars();statusEl.textContent="🏠 ルーム "+m.id+" を作成しました"});
+socket.on("adminResult",m=>{if(m.ok){unlocked=true;fillChars();statusEl.textContent="👑 管理者キャラを解放しました"}else statusEl.textContent="⚠️ コードが違います"});
 socket.on("errorMsg",m=>statusEl.textContent="⚠️ "+m);
 socket.on("state",s=>{state=s;if(s.adminUnlocked&&!unlocked){unlocked=true;fillChars()}});
 addEventListener("keydown",e=>{let k=e.key.toLowerCase();if(k==="r")socket.emit("restart");if(["a","d","w","f","1","2","3"].includes(k))pressed[k]=1});
